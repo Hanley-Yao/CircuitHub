@@ -1,2 +1,2 @@
-# CircuitHub-
+# CircuitHub
 这是一个帮助电子硬件工程师管理元器件的简易软件
