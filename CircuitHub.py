@@ -1,0 +1,454 @@
+import sqlite3
+from PyQt5.QtWidgets import QApplication, QTextEdit, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QComboBox
+from PyQt5.QtGui import QTextCursor, QFont, QColor
+from PyQt5.QtCore import Qt
+\
+
+# 创建数据库连接
+conn = sqlite3.connect("components.db")
+cursor = conn.cursor()
+
+# 创建元器件表格
+cursor.execute("CREATE TABLE IF NOT EXISTS components (id INTEGER PRIMARY KEY AUTOINCREMENT, package TEXT, electrical TEXT, remark TEXT)")
+conn.commit()
+
+# 关闭数据库连接
+cursor.close()
+conn.close()
+
+# 设置字体
+font = QFont()
+font.setBold(True)
+
+# 设置颜色
+color = QColor()
+color.setRgb(0, 0, 139)  # 深蓝色
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+
+        # 设置窗口初始大小
+        self.setGeometry(500, 250, 850, 1000)
+
+        # 创建标签页窗口
+        tab_widget = QTabWidget()
+        self.setCentralWidget(tab_widget)
+
+        # 创建封装参数输入标签页和库存查询标签页
+        entry_tab = EntryTab()
+        inventory_tab = InventoryTab()
+        query_tab = QueryTab()
+        search_tab = SearchTab()
+
+        # 将标签页添加到标签页窗口中
+        tab_widget.addTab(entry_tab, "输入元器件")
+        tab_widget.addTab(inventory_tab, "查询库存")
+        tab_widget.addTab(query_tab, "批量筛选")
+        tab_widget.addTab(search_tab, "模糊搜索")
+
+        # 连接TabWidget的currentChanged信号到InventoryTab实例的refresh_inventory方法
+        tab_widget.currentChanged.connect(inventory_tab.refresh_inventory)
+
+class EntryTab(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        # 创建标签页中的小部件
+        self.package_label = QLabel("封装参数：")
+        self.package_edit = QLineEdit()
+        self.electrical_label = QLabel("电气参数：")
+        self.electrical_edit = QLineEdit()
+        self.remark_label = QLabel("备注：")
+        self.remark_edit = QTextEdit()
+        self.save_button = QPushButton("保存")
+        self.message_label = QLabel()
+
+        # 将小部件添加到布局中
+        layout = QVBoxLayout()
+        layout.addWidget(self.package_label)
+        layout.addWidget(self.package_edit)
+        layout.addWidget(self.electrical_label)
+        layout.addWidget(self.electrical_edit)
+        layout.addWidget(self.remark_label)
+        layout.addWidget(self.remark_edit)
+        layout.addWidget(self.save_button)
+        layout.addWidget(self.message_label)
+        self.setLayout(layout)
+
+        # 连接按钮的clicked信号到对应的槽函数
+        self.save_button.clicked.connect(self.save_component)
+
+    def save_component(self):
+        # 获取用户输入的封装参数、电气参数和备注
+        package = self.package_edit.text()
+        electrical = self.electrical_edit.text()
+        remark = self.remark_edit.toPlainText()
+
+        # 检查用户是否已经输入封装参数和电气参数
+        if not package or not electrical:
+            self.message_label.setText("请输入封装参数和电气参数")
+            return
+
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 查询是否已存在相同封装参数和电气参数的元器件
+        cursor.execute("SELECT COUNT(*) FROM components WHERE package=? AND electrical=?", (package, electrical))
+        result = cursor.fetchone()
+
+        # 如果已存在相同封装参数和电气参数的元器件，不插入新数据
+        if result[0] > 0:
+            self.message_label.setText("该元器件已存在")
+
+        # 否则，插入新数据
+        else:
+            cursor.execute("INSERT INTO components (package, electrical, remark) VALUES (?, ?, ?)", (package, electrical, remark))
+            conn.commit()
+            self.message_label.setText("保存成功")
+
+        # 关闭数据库连接
+        cursor.close()
+        conn.close()
+
+        # 清空用户输入
+        self.package_edit.clear()
+        self.electrical_edit.clear()
+        self.remark_edit.clear()
+
+class InventoryTab(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        # 创建标签页中的小部件
+        self.package_table = QTableWidget()
+        self.component_table = QTableWidget()
+        self.delete_button = QPushButton("删除")
+
+        # 设置表格
+        self.package_table.setColumnCount(1)
+        self.package_table.setHorizontalHeaderLabels(["封装参数"])
+        self.component_table.setColumnCount(2)
+        self.component_table.setHorizontalHeaderLabels(["电气参数", "备注"])
+
+        # 将小部件添加到布局中
+        layout = QHBoxLayout()
+        package_layout = QVBoxLayout()
+        package_layout.addWidget(self.package_table)
+        layout.addLayout(package_layout)
+        layout.addWidget(self.component_table)
+        layout.addWidget(self.delete_button)
+        self.setLayout(layout)
+
+        # 连接封装表格的itemClicked信号到对应的槽函数
+        self.package_table.itemClicked.connect(self.load_component)
+
+        # 连接删除按钮的clicked信号到对应的槽函数
+        self.delete_button.clicked.connect(self.delete_component)
+
+        # 刷新库存数据
+        self.refresh_inventory()
+
+    def refresh_inventory(self):
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 查询所有不重复的封装参数
+        cursor.execute("SELECT DISTINCT package FROM components")
+
+        # 获取查询结果并添加到表格中
+        results = cursor.fetchall()
+        self.package_table.setRowCount(len(results))
+        for i, result in enumerate(results):
+            self.package_table.setItem(i, 0, QTableWidgetItem(result[0]))
+
+        # 如果封装参数列表不为空，则默认选中第一行
+        if self.package_table.rowCount() > 0:
+            self.package_table.selectRow(0)
+
+        # 关闭数据库连接
+        cursor.close()
+        conn.close()
+
+        # 加载当前选中的元器件列表
+        self.load_component(self.package_table.currentItem())
+
+    def load_component(self, item):
+        # 如果没有选中任何行，则清空电气参数和备注表格
+        if item is None:
+            self.component_table.setRowCount(0)
+            return
+
+        # 获取选中的封装参数
+        package = item.text()
+
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 查询所有封装参数为选中封装参数的元器件
+        cursor.execute("SELECT electrical, remark FROM components WHERE package=?", (package,))
+        results = cursor.fetchall()
+
+        # 清空表格
+        self.component_table.setRowCount(0)
+
+        # 将查询结果添加到表格中
+        for result in results:
+            row = self.component_table.rowCount()
+            self.component_table.insertRow(row)
+            self.component_table.setItem(row, 0, QTableWidgetItem(result[0]))
+            self.component_table.setItem(row, 1, QTableWidgetItem(result[1]))
+
+        # 关闭数据库连接
+        cursor.close()
+        conn.close()
+
+    def delete_component(self):
+        # 获取选中的元器件
+        selected = self.component_table.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "警告", "请选择要删除的元器件")
+            return
+
+        electrical = selected[0].text()
+
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 删除选中的元器件
+        cursor.execute("DELETE FROM components WHERE electrical=?", (electrical,))
+        conn.commit()
+
+        # 关闭数据库连接
+        cursor.close()
+        conn.close()
+
+        # 重新加载该封装参数的元器件列表
+        package = self.package_table.currentItem()
+        self.load_component(package)
+
+class QueryTab(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        # 创建标签页中的小部件
+        self.query_label = QLabel("参数：")
+        self.query_edit = QTextEdit()
+        self.query_edit.setTabStopWidth(self.query_edit.fontMetrics().width(' ') * 4)  # 设置Tab键宽度为4个空格的宽度
+        self.query_edit.setTabChangesFocus(True)  # 禁止Tab键输入
+        self.query_button = QPushButton("筛选")
+        self.result_table = QTableWidget()
+
+        # 设置表格
+        self.result_table.setColumnCount(2)
+        self.result_table.setHorizontalHeaderLabels(["封装参数", "电气参数"])
+
+        # 将小部件添加到布局中
+        layout = QVBoxLayout()
+        layout.addWidget(self.query_label)
+        layout.addWidget(self.query_edit)
+        layout.addWidget(self.query_button)
+        layout.addWidget(self.result_table)
+        self.setLayout(layout)
+
+        # 连接按钮的clicked信号到对应的槽函数
+        self.query_button.clicked.connect(self.query_components)
+
+        # 连接文本编辑器的textChanged信号到对应的槽函数
+        self.query_edit.textChanged.connect(self.on_query_edit_text_changed)
+
+        # 保存复制的行
+        self._copied_row = None
+
+    def keyPressEvent(self, event):
+        # 检查输入的字符是否为ASCII字符
+        if event.text() and not all(ord(c) < 128 for c in event.text()):
+            event.ignore()
+            return
+
+        # 调用父类的方法处理输入事件
+        super().keyPressEvent(event)
+
+    def on_query_edit_text_changed(self):
+        # 获取当前光标所在位置的文本
+        cursor = self.query_edit.textCursor()
+        current_block = cursor.block()
+        current_text = current_block.text()
+
+        # 如果文本以空格开头，则删除该空格
+        if current_text.startswith(' '):
+            cursor.movePosition(QTextCursor.StartOfBlock)
+            cursor.deleteChar()
+
+    def query_components(self):
+        # 获取用户输入的电气参数
+        query_text = self.query_edit.toPlainText().strip()
+        if not query_text:
+            return
+
+        # 将用户输入的电气参数分行处理
+        query_list = query_text.split('\n')
+
+        # 遍历用户输入的电气参数，查找匹配的元器件
+        matched_components = []
+        not_found_components = []
+        for query in query_list:
+            # 解析封装参数和电气参数
+            if ' ' not in query:
+                not_found_components.append((query, ''))
+                continue
+            package, electrical = query.split(' ', 1)
+
+            # 查询匹配的元器件
+            conn = sqlite3.connect("components.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT package, electrical FROM components WHERE LOWER(package)=? AND LOWER(electrical)=?", (package.lower(), electrical.lower()))
+            results = cursor.fetchall()
+
+            # 如果有匹配的元器件，将其添加到对应列表中
+            if results:
+                for result in results:
+                    if result not in matched_components:
+                        matched_components.append(result)
+            else:
+                not_found_components.append((package, electrical))
+
+            cursor.close()
+            conn.close()
+
+        # 清空表格
+        self.result_table.setRowCount(0)
+
+        # 将匹配的元器件添加到表格中
+        for component in matched_components:
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            self.result_table.setItem(row, 0, QTableWidgetItem(component[0]))
+            self.result_table.setItem(row, 1, QTableWidgetItem(component[1]))
+
+        # 将未找到的元器件添加到表格中
+        for component in not_found_components:
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            self.result_table.setItem(row, 0, QTableWidgetItem(component[0]))
+            self.result_table.setItem(row, 1, QTableWidgetItem(component[1]))
+            # 更改字体颜色和加粗
+            self.result_table.item(row, 0).setForeground(color)
+            self.result_table.item(row, 0).setFont(font)
+            self.result_table.item(row, 1).setForeground(color)
+            self.result_table.item(row, 1).setFont(font)
+
+    def copy_format(self):
+        # 获取选中的行
+        rows = set(index.row() for index in self.result_table.selectedIndexes())
+
+        # 如果有且仅有一行被选中，则保存该行的数据格式
+        if len(rows) == 1:
+            self._copied_row = self.result_table.takeRow(list(rows)[0])[0]
+
+    def paste_format(self):
+        # 获取选中的行
+        rows = set(index.row() for index in self.result_table.selectedIndexes())
+
+        # 如果有且仅有一行被选中，并且已经保存了数据格式，则将保存的数据格式应用到该行
+        if len(rows) == 1 and self._copied_row is not None:
+            row = list(rows)[0]
+            self.result_table.insertRow(row)
+            for column in range(self.result_table.columnCount()):
+                item = QTableWidgetItem(self._copied_row.text())
+                item.setForeground(self._copied_row.foreground())
+                item.setBackground(self._copied_row.background())
+                item.setFont(self._copied_row.font())
+                item.setTextAlignment(self._copied_row.textAlignment())
+                self.result_table.setItem(row, column, item)
+
+class SearchTab(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        # 创建标签页中的小部件
+        self.search_label = QLabel("搜索：")
+        self.search_edit = QLineEdit()
+        self.search_button = QPushButton("搜索")
+        self.result_table = QTableWidget()
+
+        # 设置表格
+        self.result_table.setColumnCount(3)
+        self.result_table.setHorizontalHeaderLabels(["封装参数", "电气参数", "备注"])
+
+        # 将小部件添加到布局中
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(self.search_label)
+        search_layout.addWidget(self.search_edit)
+        search_layout.addWidget(self.search_button)
+
+        layout = QVBoxLayout()
+        layout.addLayout(search_layout)
+        layout.addWidget(self.result_table)
+        self.setLayout(layout)
+
+        # 连接按钮的clicked信号到对应的槽函数
+        self.search_button.clicked.connect(self.search_database)
+
+class SearchTab(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        # 创建标签页中的小部件
+        self.search_label = QLabel("搜索：")
+        self.search_edit = QLineEdit()
+        self.search_button = QPushButton("搜索")
+        self.result_table = QTableWidget()
+
+        # 设置表格
+        self.result_table.setColumnCount(3)
+        self.result_table.setHorizontalHeaderLabels(["封装参数", "电气参数", "备注"])
+
+        # 将小部件添加到布局中
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(self.search_label)
+        search_layout.addWidget(self.search_edit)
+        search_layout.addWidget(self.search_button)
+
+        layout = QVBoxLayout()
+        layout.addLayout(search_layout)
+        layout.addWidget(self.result_table)
+        self.setLayout(layout)
+
+        # 连接按钮的clicked信号到对应的槽函数
+        self.search_button.clicked.connect(self.search_database)
+
+    def search_database(self):
+        # 获取用户输入的搜索文本
+        search_text = self.search_edit.text().strip()
+        if not search_text:
+            return
+
+        # 查询匹配的元器件
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT package, electrical, remark FROM components WHERE package LIKE ? OR electrical LIKE ? OR remark LIKE ?", ('%'+search_text+'%', '%'+search_text+'%', '%'+search_text+'%'))
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # 清空表格
+        self.result_table.setRowCount(0)
+
+        # 将匹配的元器件添加到表格中
+        for component in results:
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            self.result_table.setItem(row, 0, QTableWidgetItem(component[0]))
+            self.result_table.setItem(row, 1, QTableWidgetItem(component[1]))
+            self.result_table.setItem(row, 2, QTableWidgetItem(component[2]))
+
+if __name__ == "__main__":
+    app = QApplication([])
+    window = MainWindow()
+    window.show()
+    app.exec_()
