@@ -1,5 +1,5 @@
 import sqlite3
-from PyQt5.QtWidgets import QApplication, QTextEdit, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QComboBox
+from PyQt5.QtWidgets import QApplication, QTextEdit, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QComboBox, QHeaderView
 from PyQt5.QtGui import QTextCursor, QFont, QColor
 from PyQt5.QtCore import Qt
 \
@@ -124,21 +124,48 @@ class InventoryTab(QWidget):
         # 创建标签页中的小部件
         self.package_table = QTableWidget()
         self.component_table = QTableWidget()
+        self.save_button = QPushButton("保存")
         self.delete_button = QPushButton("删除")
+        self.total_components_label = QLabel()
+        self.total_packages_label = QLabel()
+        self.current_package_label = QLabel()
 
         # 设置表格
         self.package_table.setColumnCount(1)
         self.package_table.setHorizontalHeaderLabels(["封装参数"])
+        self.package_table.setMinimumWidth(300) # 设置最小宽度
         self.component_table.setColumnCount(2)
         self.component_table.setHorizontalHeaderLabels(["电气参数", "备注"])
+        self.component_table.setMinimumWidth(500) # 设置最小宽度
+
+        # 设置封装参数列的大小调整模式为ResizeToContents
+        self.package_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.component_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
 
         # 将小部件添加到布局中
-        layout = QHBoxLayout()
-        package_layout = QVBoxLayout()
-        package_layout.addWidget(self.package_table)
-        layout.addLayout(package_layout)
-        layout.addWidget(self.component_table)
-        layout.addWidget(self.delete_button)
+        table_layout = QHBoxLayout()
+        table_layout.addWidget(self.package_table)
+        table_layout.addWidget(self.component_table)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.delete_button)
+        button_layout.addWidget(self.save_button)
+
+        label_layout = QHBoxLayout()
+        label_layout.addWidget(self.total_components_label)
+        label_layout.addWidget(self.total_packages_label)
+        label_layout.addWidget(self.current_package_label)
+
+        # 创建包含标签和按钮布局的水平布局
+        stats_and_buttons_layout = QHBoxLayout()
+        stats_and_buttons_layout.addLayout(label_layout)
+        stats_and_buttons_layout.addStretch()
+        stats_and_buttons_layout.addLayout(button_layout)
+
+        layout = QVBoxLayout()
+        layout.addLayout(table_layout)
+        layout.addLayout(stats_and_buttons_layout)
+
         self.setLayout(layout)
 
         # 连接封装表格的itemClicked信号到对应的槽函数
@@ -146,6 +173,9 @@ class InventoryTab(QWidget):
 
         # 连接删除按钮的clicked信号到对应的槽函数
         self.delete_button.clicked.connect(self.delete_component)
+
+        # 连接保存按钮的clicked信号到对应的槽函数
+        self.save_button.clicked.connect(self.save_changes)
 
         # 刷新库存数据
         self.refresh_inventory()
@@ -168,6 +198,14 @@ class InventoryTab(QWidget):
         if self.package_table.rowCount() > 0:
             self.package_table.selectRow(0)
 
+        # 更新总器件数和总封装数
+        cursor.execute("SELECT COUNT(*) FROM components")
+        total_components = cursor.fetchone()[0]
+        self.total_components_label.setText("总器件数：" + str(total_components))
+
+        total_packages = self.package_table.rowCount()
+        self.total_packages_label.setText("总封装数：" + str(total_packages))
+
         # 关闭数据库连接
         cursor.close()
         conn.close()
@@ -179,6 +217,7 @@ class InventoryTab(QWidget):
         # 如果没有选中任何行，则清空电气参数和备注表格
         if item is None:
             self.component_table.setRowCount(0)
+            self.current_package_label.setText("")
             return
 
         # 获取选中的封装参数
@@ -201,6 +240,171 @@ class InventoryTab(QWidget):
             self.component_table.insertRow(row)
             self.component_table.setItem(row, 0, QTableWidgetItem(result[0]))
             self.component_table.setItem(row, 1, QTableWidgetItem(result[1]))
+
+        # 更新当前选中的封装参数标签
+        self.current_package_label.setText("当前选中的封装参数：" + package)
+
+        # 关闭数据库连接
+        cursor.close()
+        conn.close()
+
+    def delete_component(self):
+        # 获取当前选中的封装参数和电气参数
+        current_package = self.package_table.currentItem().text()
+        current_component = self.component_table.currentItem().text()
+
+        # 如果没有选中任何元器件，则不执行任何操作
+        if current_component is None:
+            return
+
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 删除当前选中的元器件
+        cursor.execute("DELETE FROM components WHERE package=? AND electrical=?", (current_package, current_component))
+
+        # 提交更改并关闭数据库连接
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        # 刷新库存数据
+        self.refresh_inventory()
+
+    def save_changes(self):
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 更新所有表格中的元器件
+        for row in range(self.component_table.rowCount()):
+            package = self.package_table.currentItem().text()
+            electrical = self.component_table.item(row, 0).text()
+            remark = self.component_table.item(row, 1).text()
+
+            cursor.execute("UPDATE components SET remark=? WHERE package=? AND electrical=?", (remark, package, electrical))
+
+class InventoryTab(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        # 创建标签页中的小部件
+        self.package_table = QTableWidget()
+        self.component_table = QTableWidget()
+        self.save_button = QPushButton("保存")
+        self.delete_button = QPushButton("删除")
+        self.total_components_label = QLabel()
+        self.total_packages_label = QLabel()
+        self.current_package_label = QLabel()
+
+        # 设置表格
+        self.package_table.setColumnCount(1)
+        self.package_table.setHorizontalHeaderLabels(["封装参数"])
+        self.package_table.setMinimumWidth(300) # 设置最小宽度
+        self.component_table.setColumnCount(2)
+        self.component_table.setHorizontalHeaderLabels(["电气参数", "备注"])
+        self.component_table.setMinimumWidth(500) # 设置最小宽度
+
+        # 设置封装参数列的大小调整模式为ResizeToContents
+        self.package_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.component_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+
+        # 将小部件添加到布局中
+        table_layout = QHBoxLayout()
+        table_layout.addWidget(self.package_table)
+        table_layout.addWidget(self.component_table)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.total_components_label)
+        button_layout.addWidget(self.total_packages_label)
+        button_layout.addWidget(self.current_package_label)
+        button_layout.addStretch()
+        button_layout.addWidget(self.delete_button)
+        button_layout.addWidget(self.save_button)
+
+        layout = QVBoxLayout()
+        layout.addLayout(table_layout)
+        layout.addLayout(button_layout)
+
+        self.setLayout(layout)
+
+        # 连接封装表格的itemClicked信号到对应的槽函数
+        self.package_table.itemClicked.connect(self.load_component)
+
+        # 连接删除按钮的clicked信号到对应的槽函数
+        self.delete_button.clicked.connect(self.delete_component)
+
+        # 连接保存按钮的clicked信号到对应的槽函数
+        self.save_button.clicked.connect(self.save_changes)
+
+        # 刷新库存数据
+        self.refresh_inventory()
+
+    def refresh_inventory(self):
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 查询所有不重复的封装参数
+        cursor.execute("SELECT DISTINCT package FROM components")
+
+        # 获取查询结果并添加到表格中
+        results = cursor.fetchall()
+        self.package_table.setRowCount(len(results))
+        for i, result in enumerate(results):
+            self.package_table.setItem(i, 0, QTableWidgetItem(result[0]))
+
+        # 如果封装参数列表不为空，则默认选中第一行
+        if self.package_table.rowCount() > 0:
+            self.package_table.selectRow(0)
+
+        # 更新总器件数和总封装数
+        cursor.execute("SELECT COUNT(*) FROM components")
+        total_components = cursor.fetchone()[0]
+        self.total_components_label.setText("总器件数：" + str(total_components))
+
+        total_packages = self.package_table.rowCount()
+        self.total_packages_label.setText("总封装数：" + str(total_packages))
+
+        # 关闭数据库连接
+        cursor.close()
+        conn.close()
+
+        # 加载当前选中的元器件列表
+        self.load_component(self.package_table.currentItem())
+
+    def load_component(self, item):
+        # 如果没有选中任何行，则清空电气参数和备注表格
+        if item is None:
+            self.component_table.setRowCount(0)
+            self.current_package_label.setText("")
+            return
+
+        # 获取选中的封装参数
+        package = item.text()
+
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 查询所有封装参数为选中封装参数的元器件
+        cursor.execute("SELECT electrical, remark FROM components WHERE package=?", (package,))
+        results = cursor.fetchall()
+
+        # 清空表格
+        self.component_table.setRowCount(0)
+
+        # 将查询结果添加到表格中
+        for result in results:
+            row = self.component_table.rowCount()
+            self.component_table.insertRow(row)
+            self.component_table.setItem(row, 0, QTableWidgetItem(result[0]))
+            self.component_table.setItem(row, 1, QTableWidgetItem(result[1]))
+
+        # 更新当前选中封装下的器件数
+        count = len(results)
+        self.current_package_label.setText("当前选中封装的器件数：" + str(count))
 
         # 关闭数据库连接
         cursor.close()
@@ -230,6 +434,31 @@ class InventoryTab(QWidget):
         # 重新加载该封装参数的元器件列表
         package = self.package_table.currentItem()
         self.load_component(package)
+
+    def save_changes(self):
+        # 获取当前选中的封装参数
+        package = self.package_table.currentItem().text()
+
+        # 打开数据库连接
+        conn = sqlite3.connect("components.db")
+        cursor = conn.cursor()
+
+        # 删除该封装参数的所有元器件
+        cursor.execute("DELETE FROM components WHERE package=?", (package,))
+
+        # 将修改后的元器件插入到数据库中
+        for row in range(self.component_table.rowCount()):
+            electrical = self.component_table.item(row, 0).text()
+            remark = self.component_table.item(row, 1).text()
+            cursor.execute("INSERT INTO components (package, electrical, remark) VALUES (?, ?, ?)", (package, electrical, remark))
+
+        # 提交更改并关闭数据库连接
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        # 刷新库存数据
+        self.refresh_inventory()
 
 class QueryTab(QWidget):
     def __init__(self):
